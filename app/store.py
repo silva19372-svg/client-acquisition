@@ -12,9 +12,9 @@ class LeadStore(Protocol):
     def initialise(self) -> None: ...
     def current_batch(self, caller_id: str) -> dict[str, Any]: ...
     def assign_next_batch(self, caller_id: str) -> dict[str, Any]: ...
+    def ready_count(self) -> int: ...
     def upsert_leads(self, records: list[dict[str, Any]], source: str) -> int: ...
     def record_collection(self, prepared: int, detail: str) -> None: ...
-
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS portal_leads (
@@ -112,11 +112,23 @@ class PostgresLeadStore:
                 row = cursor.fetchone()
             return self._batch_payload(connection, row[0] if row else None)
 
-    def assign_next_batch(self, caller_id: str) -> dict[str, Any]:
+    def ready_count(self) -> int:
         with self._connection() as connection:
             with connection.cursor() as cursor:
-                batch_id = str(uuid.uuid4())
-                cursor.execute("INSERT INTO caller_batches (id, caller_id) VALUES (%s, %s)", (batch_id, caller_id))
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) FROM portal_leads l
+                    WHERE l.has_phone = TRUE
+                      AND l.status IN ('Found', 'Reviewed', 'Approved')
+                      AND NOT EXISTS (SELECT 1 FROM caller_batch_leads bl WHERE bl.lead_id = l.id)
+                    """
+                )
+                return int(cursor.fetchone()[0])
+
+    def assign_next_batch(self, caller_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            assigned = False
+            with connection.cursor() as cursor:
                 cursor.execute(
                     """
                     SELECT l.id
@@ -131,10 +143,22 @@ class PostgresLeadStore:
                     (self.batch_size,),
                 )
                 lead_ids = [row[0] for row in cursor.fetchall()]
-                for lead_id in lead_ids:
-                    cursor.execute("INSERT INTO caller_batch_leads (lead_id, batch_id) VALUES (%s, %s)", (lead_id, batch_id))
-            return self._batch_payload(connection, batch_id)
-
+                if lead_ids:
+                    batch_id = str(uuid.uuid4())
+                    cursor.execute("INSERT INTO caller_batches (id, caller_id) VALUES (%s, %s)", (batch_id, caller_id))
+                    for lead_id in lead_ids:
+                        cursor.execute("INSERT INTO caller_batch_leads (lead_id, batch_id) VALUES (%s, %s)", (lead_id, batch_id))
+                    assigned = True
+                else:
+                    cursor.execute(
+                        "SELECT id::text FROM caller_batches WHERE caller_id = %s ORDER BY created_at DESC LIMIT 1",
+                        (caller_id,),
+                    )
+                    row = cursor.fetchone()
+                    batch_id = row[0] if row else None
+            payload = self._batch_payload(connection, batch_id)
+            payload["refreshed"] = assigned
+            return payload
     def upsert_leads(self, records: list[dict[str, Any]], source: str) -> int:
         accepted = [record for record in (imported_record(item) for item in records) if record]
         with self._connection() as connection:
@@ -187,7 +211,14 @@ class MemoryLeadStore:
         return {"leads": [caller_card(self.records[item]) for item in ids], "batch_created_at": "", "remaining_pool": self._remaining()}
 
     def _remaining(self) -> int:
-        return sum(1 for lead_id in self.records if lead_id not in self.assigned)
+        return sum(
+            1
+            for lead_id, record in self.records.items()
+            if lead_id not in self.assigned and record.get("status") in {"Found", "Reviewed", "Approved"}
+        )
+
+    def ready_count(self) -> int:
+        return self._remaining()
 
     def assign_next_batch(self, caller_id: str) -> dict[str, Any]:
         eligible = [
@@ -197,10 +228,18 @@ class MemoryLeadStore:
         eligible.sort(key=lambda item: (-int(item.get("score", 0)), item["name"]))
         selected = eligible[: self.batch_size]
         ids = [item["id"] for item in selected]
+        if not ids:
+            payload = self.current_batch(caller_id)
+            payload["refreshed"] = False
+            return payload
         self.assigned.update(ids)
         self.batches[caller_id] = ids
-        return {"leads": [caller_card(item) for item in selected], "batch_created_at": now_iso(), "remaining_pool": self._remaining()}
-
+        return {
+            "leads": [caller_card(item) for item in selected],
+            "batch_created_at": now_iso(),
+            "remaining_pool": self._remaining(),
+            "refreshed": True,
+        }
     def upsert_leads(self, records: list[dict[str, Any]], source: str) -> int:
         accepted = [record for record in (imported_record(item) for item in records) if record]
         for record in accepted:

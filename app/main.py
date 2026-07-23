@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hmac
+import logging
+from collections.abc import Callable
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -10,13 +12,31 @@ from .settings import Settings
 from .store import LeadStore, PostgresLeadStore
 
 
+LOG = logging.getLogger("caller_portal.api")
+
+
 class ImportRequest(BaseModel):
     leads: list[dict[str, Any]] = Field(default_factory=list, max_length=500)
 
 
-def create_app(*, settings: Settings | None = None, store: LeadStore | None = None) -> FastAPI:
+def create_app(
+    *,
+    settings: Settings | None = None,
+    store: LeadStore | None = None,
+    replenisher: Callable[[], int] | None = None,
+) -> FastAPI:
     config = settings or Settings.from_env()
+    supplied_store = store is not None
     repository = store or PostgresLeadStore(config.database_url, config.batch_size)
+
+    if replenisher is None and not supplied_store:
+        from .collect import replenish_public_leads
+
+        replenisher = lambda: replenish_public_leads(
+            config,
+            repository,
+            reason="on-demand reserve replenishment before a caller refresh",
+        )
 
     app = FastAPI(title="Jarvis Caller Portal API", docs_url=None, redoc_url=None)
     app.state.settings = config
@@ -47,7 +67,16 @@ def create_app(*, settings: Settings | None = None, store: LeadStore | None = No
 
     @app.post("/v1/caller/refresh")
     def refresh_batch(caller_id: str = Depends(require_portal)) -> dict[str, Any]:
-        return {"ok": True, **repository.assign_next_batch(caller_id)}
+        reserve_threshold = config.batch_size + config.ready_reserve
+        if repository.ready_count() < reserve_threshold and replenisher is not None:
+            try:
+                replenisher()
+            except Exception as exc:  # Keep the caller's existing batch visible if collection is temporarily unavailable.
+                LOG.warning("Lead reserve replenishment failed: %s", exc)
+        payload = repository.assign_next_batch(caller_id)
+        if not payload.get("refreshed"):
+            payload["message"] = "Your current call list is still available while the next reserve is being prepared."
+        return {"ok": True, **payload}
 
     @app.post("/v1/internal/import")
     async def import_leads(request: Request, payload: ImportRequest) -> dict[str, Any]:
@@ -58,6 +87,5 @@ def create_app(*, settings: Settings | None = None, store: LeadStore | None = No
         return {"ok": True, "imported": count}
 
     return app
-
 
 app = create_app()

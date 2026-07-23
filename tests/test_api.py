@@ -18,7 +18,7 @@ def seed(name: str, phone: str, score: int = 80) -> dict:
 
 
 def client() -> TestClient:
-    settings = Settings(database_url="memory://", portal_shared_secret="test-secret", city="Bangalore", batch_size=2, daily_limit=10)
+    settings = Settings(database_url="memory://", portal_shared_secret="test-secret", city="Bangalore", batch_size=2, ready_reserve=1, daily_limit=10)
     app = create_app(settings=settings, store=MemoryLeadStore([seed("Alpha", "98765 00001"), seed("Beta", "98765 00002"), seed("Gamma", "98765 00003")], batch_size=2))
     return TestClient(app)
 
@@ -41,6 +41,34 @@ def test_refresh_assigns_a_non_overlapping_batch_to_each_caller() -> None:
     assert len(second["leads"]) == 1
     assert {lead["id"] for lead in first["leads"]}.isdisjoint({lead["id"] for lead in second["leads"]})
 
+
+
+def test_refresh_keeps_the_current_batch_when_the_pool_is_empty() -> None:
+    settings = Settings(database_url="memory://", portal_shared_secret="test-secret", city="Bangalore", batch_size=2, ready_reserve=1, daily_limit=10)
+    store = MemoryLeadStore([seed("Alpha", "98765 00001"), seed("Beta", "98765 00002")], batch_size=2)
+    test_client = TestClient(create_app(settings=settings, store=store))
+    first = test_client.post("/v1/caller/refresh", headers=headers()).json()
+    second = test_client.post("/v1/caller/refresh", headers=headers()).json()
+    assert first["refreshed"] is True
+    assert second["refreshed"] is False
+    assert [lead["id"] for lead in second["leads"]] == [lead["id"] for lead in first["leads"]]
+
+
+def test_refresh_replenishes_before_assigning_the_next_batch() -> None:
+    settings = Settings(database_url="memory://", portal_shared_secret="test-secret", city="Bangalore", batch_size=2, ready_reserve=1, daily_limit=10)
+    store = MemoryLeadStore([seed("Alpha", "98765 00001"), seed("Beta", "98765 00002"), seed("Gamma", "98765 00003")], batch_size=2)
+    calls: list[str] = []
+
+    def replenish() -> int:
+        calls.append("called")
+        return store.upsert_leads([seed("Delta", "98765 00004"), seed("Epsilon", "98765 00005")], "test refill")
+
+    test_client = TestClient(create_app(settings=settings, store=store, replenisher=replenish))
+    test_client.post("/v1/caller/refresh", headers=headers())
+    refreshed = test_client.post("/v1/caller/refresh", headers=headers()).json()
+    assert calls == ["called"]
+    assert len(refreshed["leads"]) == 2
+    assert refreshed["remaining_pool"] >= 1
 
 def test_import_requires_the_shared_secret_and_ignores_non_callable_records() -> None:
     test_client = client()

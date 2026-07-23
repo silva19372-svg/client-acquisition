@@ -19,6 +19,7 @@ class Settings:
     portal_shared_secret: str
     city: str
     batch_size: int
+    ready_reserve: int
     daily_limit: int
 
     @classmethod
@@ -27,6 +28,7 @@ class Settings:
             database_url=str(os.getenv("DATABASE_URL") or "").strip(),
             portal_shared_secret=str(os.getenv("PORTAL_SHARED_SECRET") or "").strip(),
             city=str(os.getenv("CITY") or "Bangalore").strip() or "Bangalore",
-            batch_size=_positive_int("BATCH_SIZE", 6, 20),
+            batch_size=_positive_int("BATCH_SIZE", 10, 20),
+            ready_reserve=_positive_int("READY_RESERVE", 10, 500),
             daily_limit=_positive_int("DAILY_LIMIT", 20, 100),
         )

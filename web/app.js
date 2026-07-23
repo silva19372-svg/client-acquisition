@@ -9,6 +9,8 @@ const elements = {
   notice: document.querySelector("#notice"),
 };
 
+let lastNonEmptyBatch = null;
+
 const escapeHtml = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (character) => ({
     "&": "&amp;",
@@ -72,6 +74,7 @@ function render(data) {
     elements.leads.innerHTML = `<section class="empty"><h2>No new businesses are ready for you yet.</h2><p>The team is replenishing the public lead pool. Refresh again later.</p></section>`;
   } else {
     elements.leads.innerHTML = leads.map(leadCard).join("");
+    lastNonEmptyBatch = data;
   }
   elements.updated.textContent = data.batch_created_at
     ? `Batch prepared ${new Date(data.batch_created_at).toLocaleString()}. ${data.remaining_pool || 0} more are currently available.`
@@ -108,8 +111,17 @@ async function refresh() {
   elements.refresh.disabled = true;
   elements.refresh.textContent = "Refreshing…";
   try {
-    render(await callApi("POST"));
-    showNotice("Your next call batch is ready.");
+    const data = await callApi("POST");
+    if ((data.leads || []).length) {
+      render(data);
+    } else if (lastNonEmptyBatch) {
+      render(lastNonEmptyBatch);
+    } else {
+      render(data);
+    }
+    showNotice(data.refreshed === false
+      ? (data.message || "Your current call list is still ready while the next reserve is prepared.")
+      : "Your next call batch is ready.");
   } catch (error) {
     showNotice(error.message, true);
   } finally {
@@ -117,7 +129,6 @@ async function refresh() {
     elements.refresh.textContent = "Refresh call list";
   }
 }
-
 function setSignedIn(signedIn) {
   elements.signIn.hidden = signedIn;
   elements.signOut.hidden = !signedIn;

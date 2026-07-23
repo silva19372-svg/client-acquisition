@@ -10,13 +10,15 @@ from typing import Any
 
 from .domain import osm_record
 from .settings import Settings
-from .store import PostgresLeadStore
+from .store import LeadStore, PostgresLeadStore
 
 LOG = logging.getLogger("caller_portal.collect")
 
 DEFAULT_ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
     "https://z.overpass-api.de/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 )
 
 
@@ -53,17 +55,21 @@ def fetch_osm_restaurants(limit: int) -> list[dict[str, Any]]:
     raise RuntimeError("; ".join(errors) or "OpenStreetMap returned no usable payload")
 
 
+def replenish_public_leads(settings: Settings, store: LeadStore, *, reason: str) -> int:
+    """Load a broad public-business reserve so callers are never the scraper."""
+    elements = fetch_osm_restaurants(settings.daily_limit)
+    records = [record for record in (osm_record(element, settings.city) for element in elements) if record]
+    return store.upsert_leads(records, reason)
+
+
 def run() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = Settings.from_env()
     store = PostgresLeadStore(settings.database_url, settings.batch_size)
     store.initialise()
-    elements = fetch_osm_restaurants(settings.daily_limit)
-    records = [record for record in (osm_record(element, settings.city) for element in elements) if record]
-    prepared = store.upsert_leads(records[: settings.daily_limit], "scheduled OpenStreetMap public-business collection")
+    prepared = replenish_public_leads(settings, store, reason="scheduled OpenStreetMap public-business collection")
     LOG.info("Prepared %s callable public-business leads.", prepared)
     return prepared
-
 
 if __name__ == "__main__":
     try:

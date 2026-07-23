@@ -18,9 +18,11 @@ Client Project Manager.
 ## What refresh means
 
 `Refresh call list` does not scrape the web from a caller's laptop. It assigns
-that caller the next available batch of already-prepared leads. This keeps the
-page fast, avoids duplicate calls between friends, and prevents callers from
-triggering uncontrolled research. A Railway cron job replenishes the pool.
+that caller the next available batch of already-prepared leads. When the
+unassigned reserve falls below the next batch plus the configured backup,
+Railway replenishes it from public business data before allocating the next
+batch. If a source is temporarily unavailable, the caller keeps their previous
+batch instead of receiving an empty page.
 
 ## Railway
 
@@ -40,7 +42,8 @@ DATABASE_URL=${{Postgres.DATABASE_URL}}
 PORTAL_SHARED_SECRET=<long random value>
 CITY=Bangalore
 DAILY_LIMIT=20
-BATCH_SIZE=6
+BATCH_SIZE=10
+READY_RESERVE=10
 ```
 
 The API service also needs `PORT`, supplied automatically by Railway. Do not

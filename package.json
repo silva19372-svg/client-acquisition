@@ -1,0 +1,8 @@
+{
+  "name": "jarvis-caller-portal",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@netlify/identity": "latest"
+  }
+}

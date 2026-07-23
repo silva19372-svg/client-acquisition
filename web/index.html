@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#14271d" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Call List</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="https://identity.netlify.com/v1/netlify-identity-widget.js"></script>
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero" aria-labelledby="page-title">
+        <p class="eyebrow">Jarvis / private call list</p>
+        <h1 id="page-title">Businesses worth calling.</h1>
+        <p class="intro">A small, focused queue of public Bangalore restaurant leads. Your refresh button gives you the next available batch—nothing else.</p>
+        <button id="signIn" class="login" type="button">Sign in</button>
+        <button id="signOut" class="text-button" type="button" hidden>Sign out</button>
+      </section>
+
+      <section id="callerApp" hidden aria-live="polite">
+        <div class="toolbar">
+          <div>
+            <p class="eyebrow">Your call batch</p>
+            <p id="updated" class="subtle">Loading public business leads…</p>
+          </div>
+          <button id="refresh" type="button">Refresh call list</button>
+        </div>
+        <div id="notice" class="notice" role="status" hidden></div>
+        <section id="leads" class="leads" aria-live="polite"></section>
+      </section>
+    </main>
+  </body>
+</html>

@@ -79,7 +79,12 @@ function render(data) {
 }
 
 async function callApi(method = "GET") {
-  const response = await fetch("/.netlify/functions/caller-leads", { method, cache: "no-store" });
+  const token = identity?.currentUser()?.token?.access_token;
+  const response = await fetch("/.netlify/functions/caller-gateway", {
+    method,
+    cache: "no-store",
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "Could not load the call list.");
   return data;
